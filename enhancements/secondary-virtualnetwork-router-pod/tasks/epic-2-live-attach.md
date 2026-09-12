@@ -12,11 +12,12 @@ Replaces Epic 1's recreation-only subnet lifecycle with a live-attach-first mech
 
 ## Acceptance Criteria
 
-- [ ] A router pod agent watches a ConfigMap and applies gateway-IP, route, and port-security changes to existing interfaces live, without a pod restart.
+- [ ] A router pod agent watches a ConfigMap and applies gateway-IP and route changes to existing interfaces live, without a pod restart; AAP separately reconciles OVN port security.
 - [ ] The agent never independently queries or discovers subnet existence — all state it applies originates from the operator via the ConfigMap.
 - [ ] When `multus-dynamic-networks-controller` is available and reacts to the router pod, adding a subnet results in live interface injection, detected and configured by the agent, with no restart.
 - [ ] When it is unavailable, or the new interface doesn't appear within a defined timeout, the operator falls back to Epic 1's recreation path automatically.
 - [ ] Subnet removal follows the same two-tier approach.
+- [ ] Any router pod replacement, including an unexpected pod/node failure, is detected without requiring a Subnet or VirtualNetwork spec change; a recovery reconciliation restores the configured interfaces and re-applies port security before the networking resources are reported Ready.
 
 ## Stories
 
@@ -28,12 +29,13 @@ Replaces Epic 1's recreation-only subnet lifecycle with a live-attach-first mech
 
 **Acceptance Criteria:**
 - [ ] The router pod runs an agent process that watches a ConfigMap written by the operator.
-- [ ] For interfaces that already exist on the pod, the agent applies gateway-IP, route, and port-security changes live, without a pod restart.
+- [ ] For interfaces that already exist on the pod, the agent applies gateway-IP and route changes live, without a pod restart.
+- [ ] OVN port-security changes remain the responsibility of AAP's `cudn_net` reconciliation until a supported declarative, tenant-scoped OVN mechanism exists.
 - [ ] The agent applies exactly what the operator has written — it never queries the fulfillment-service or watches `Subnet` resources directly.
 
-**Implementation Guidance:** Implement as a lightweight watch-and-reconcile loop inside the router pod's container image, replacing a static `sleep infinity`-style placeholder — the agent watches the ConfigMap and applies whatever it says (gateway IPs, routes, port security) without querying any other resource for state.
+**Implementation Guidance:** Implement as a lightweight watch-and-reconcile loop inside the router pod's container image, replacing a static `sleep infinity`-style placeholder — the agent watches the ConfigMap and applies whatever Linux network state it says (gateway IPs and routes) without querying any other resource for state. The ConfigMap may carry port-security intent for future use, but the agent must not access OVN's northbound database; AAP remains responsible for the current direct `ovn-nbctl` port-security stopgap.
 
-**Testing Approach:** Unit tests for ConfigMap-diff-to-action translation (given old/new ConfigMap content, verify the correct `ip route`/`ip addr`/port-security calls are made). Integration test: update the ConfigMap for an existing subnet's route, verify it's applied without the pod restarting (check pod start-time/UID unchanged).
+**Testing Approach:** Unit tests for ConfigMap-diff-to-action translation (given old/new ConfigMap content, verify the correct `ip route`/`ip addr` calls are made and stale state is removed). Integration test: update the ConfigMap for an existing subnet's route, verify it's applied without the pod restarting (check pod start-time/UID unchanged), then verify AAP's separate port-security reconciliation remains responsible for OVN state.
 
 **Dependencies:** Story 1.02, Story 1.04 (from Epic 1)
 
@@ -47,7 +49,7 @@ Replaces Epic 1's recreation-only subnet lifecycle with a live-attach-first mech
 
 **Acceptance Criteria:**
 - [ ] When a subnet is added, the operator patches the router pod's Multus network-attachment annotation to add the new Secondary UDN, instead of immediately recreating the pod.
-- [ ] When `multus-dynamic-networks-controller` injects the corresponding interface into the running pod, the agent (Story 2.01) detects it and configures it: link up, IPAMClaim-reserved gateway IP, routes, port security.
+- [ ] When `multus-dynamic-networks-controller` injects the corresponding interface into the running pod, the agent (Story 2.01) detects it and configures it: link up, IPAMClaim-reserved gateway IP, and routes; AAP separately reconciles port security after the attachment is visible.
 - [ ] The Subnet is marked Ready with no router pod restart having occurred.
 
 **Implementation Guidance:** Per design.md §9, this depends on an upstream, not-officially-supported-for-non-VM-pods mechanism (`multus-dynamic-networks-controller`) — implement detection of the newly-injected interface via periodic link inspection or netlink events in the agent (Story 2.01), not by assuming a specific notification callback exists. Coordinate with whoever resolves Open Question 6 (controller scoping) before relying on this path in production.
@@ -77,7 +79,29 @@ Replaces Epic 1's recreation-only subnet lifecycle with a live-attach-first mech
 
 ---
 
-### Story 2.04: [QE] E2E validation of live attach/detach and fallback
+### Story 2.04: [DEV] Router pod restart recovery and port-security reconciliation
+
+**As a** provider,
+**I want to** automatically reconcile a replacement router pod,
+**So that** a pod failure, node outage, or fallback recreation does not leave the VirtualNetwork with unpatched OVN ports.
+
+**Acceptance Criteria:**
+- [ ] The operator detects that the router pod has been replaced by observing a new pod UID (or an equivalent replacement signal), even when no Subnet or VirtualNetwork spec changed.
+- [ ] Once the replacement pod is Ready and its current Multus attachments are present, the operator triggers a recovery/reconciliation AAP job exactly once for that replacement, with retry and status reporting if the job fails.
+- [ ] The recovery job reconciles all current router-pod attachments: it validates the pod's network-status, discovers the corresponding OVN logical switch ports, and re-applies port security to every current attachment. A detached or stale port is never patched.
+- [ ] Persistent IPAMClaim-reserved gateway addresses are restored on the replacement pod, and the router agent restores the required interface, route, forwarding, and SNAT state.
+- [ ] Recovery does not depend on a Subnet edit to trigger AAP and does not cause an additional router pod restart.
+- [ ] A VirtualNetwork/Subnet is not reported Ready until the replacement pod and its networking state have been reconciled; a failed recovery is visible through status/events and is retried.
+
+**Implementation Guidance:** Add a replacement-observation path to the operator for the target cluster (pod UID tracking is the preferred identity). Coalesce duplicate events for the same pod UID and serialize recovery with subnet changes. The recovery path may use a dedicated AAP playbook/job template or invoke the existing `cudn_net` reconciliation in an explicit repair mode, but it must not rely on the normal Subnet config-version trigger because a restart does not change the Subnet spec. Keep port-security ownership in AAP: the agent's readiness/configuration signal gates overall recovery completion, while AAP independently performs the OVN port-security reconciliation after the pod's interfaces and network-status are available.
+
+**Testing Approach:** Integration test with no Subnet or VirtualNetwork spec change: delete the router pod or simulate node loss, verify a replacement receives the same gateway IPs, all expected interfaces and routes are restored, exactly one recovery AAP job is launched for the new pod UID, and all current OVN logical switch ports have port security re-applied. Verify existing VM-to-VM and egress connectivity after ARP reconvergence. Also test recovery-job failure, retry, and duplicate pod events.
+
+**Dependencies:** Story 2.01, Story 1.04, Story 1.05 (from Epic 1)
+
+---
+
+### Story 2.05: [QE] E2E validation of live attach/detach, fallback, and restart recovery
 
 **As a** QE engineer,
 **I want to** validate both the live-attach and fallback paths end-to-end,
@@ -86,15 +110,15 @@ Replaces Epic 1's recreation-only subnet lifecycle with a live-attach-first mech
 **Acceptance Criteria:**
 - [ ] E2E scenario: with `multus-dynamic-networks-controller` present, add and remove a subnet; verify no router pod restart in either direction.
 - [ ] E2E scenario: with the controller absent (or forced to time out), add and remove a subnet; verify correct fallback-to-recreation behavior and that existing subnets are unaffected.
-- [ ] E2E scenario: router pod failure/restart (independent of subnet changes) — verify normal Kubernetes restart and reconvergence.
+- [ ] E2E scenario: router pod failure/restart (independent of subnet changes) — verify a recovery AAP job is triggered for the replacement pod, port security is re-applied to all current attachments, and connectivity returns after ARP reconvergence.
 
 **Testing Approach:** Full e2e suite covering both code paths in a real (or kind-based) cluster, toggling `multus-dynamic-networks-controller` availability between test runs.
 
-**Dependencies:** Story 2.01, Story 2.02, Story 2.03
+**Dependencies:** Story 2.01, Story 2.02, Story 2.03, Story 2.04
 
 ---
 
-### Story 2.05: [DOCS] Document live-attach behavior and its support status
+### Story 2.06: [DOCS] Document live-attach behavior and its support status
 
 **As an** SRE or provider,
 **I want to** understand when subnet changes are live vs. disruptive, and the support status of the underlying mechanism,
@@ -105,8 +129,9 @@ Replaces Epic 1's recreation-only subnet lifecycle with a live-attach-first mech
 **Documentation Inputs:**
 - **Story 2.02:** the live-attach mechanism and its dependency on `multus-dynamic-networks-controller`.
 - **Story 2.03:** the fallback trigger and how to distinguish live-attach from recreation via pod events/status.
+- **Story 2.04:** restart recovery, AAP repair-job triggering, and port-security reconciliation after replacement.
 
-**Dependencies:** Story 2.02, Story 2.03
+**Dependencies:** Story 2.02, Story 2.03, Story 2.04
 
 ## Test Case References
 

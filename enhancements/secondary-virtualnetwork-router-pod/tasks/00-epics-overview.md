@@ -39,5 +39,5 @@ Phase 1 (Epics 1–3) is independently shippable and delivers complete value wit
 - **Epic 1**: stories 1.01–1.05 are sequential (each builds directly on the previous one's resources); 1.06 (QE) and 1.07 (DOCS) follow once 1.01–1.05 are merged.
 - **Epic 2**: 2.01 (agent) can start in parallel with 2.02 (live-attach patch logic) since they're different code paths that converge in 2.03 (fallback trigger, which needs both). 2.04/2.05 follow.
 - **Epic 3**: fully sequential, small epic.
-- **Epic 4**: 4.01 (NetworkClass detection) must land before 4.02 (conditional transit interface provisioning); 4.03 (QE) follows.
+- **Epic 4**: 4.01 (NetworkClass detection) must land before 4.02 (OSAC-managed VirtualNetwork-scoped transit lifecycle), followed by 4.03 (conditional transit interface provisioning) and 4.04 (QE validation).
 - **Epic 5**: 5.01 and 5.02 can proceed in parallel (they're the two directions of the same route-dispatch mechanism); 5.03 (reconciliation consistency) depends on both; 5.04/5.05 follow.

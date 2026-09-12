@@ -366,7 +366,7 @@
 
 | Story | AC | Priority | Automation |
 |-------|-----|----------|------------|
-| Story 4.01, 4.02 | AC-1, AC-2 | critical | automated |
+| Story 4.01, 4.02, 4.03 | AC-1, AC-2 | critical | automated |
 
 ##### Preconditions
 - A NetworkClass exists with a fabric manager configured.
@@ -383,7 +383,7 @@
 
 | Story | AC | Priority | Automation |
 |-------|-----|----------|------------|
-| Story 4.02 | AC-2 | high | automated |
+| Story 4.03 | AC-2 | high | automated |
 
 ##### Preconditions
 - TC-FR16-01 has been executed; the transit interface's address is recorded.

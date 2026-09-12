@@ -21,7 +21,7 @@ Requirement IDs are assigned sequentially from the PRD's Acceptance Criteria (§
 | FR-13: Agent never independently discovers subnet existence | Epic 2 | Story 2.01 | TC-FR13-01 | Covered |
 | FR-14: Existing default-model VirtualNetworks unaffected | Epic 1 | Story 1.01, 1.02 | TC-FR14-01 | Covered |
 | FR-15: Dual-attached VMs (Primary UDN elsewhere) can still attach to a Secondary VN subnet via shared-label targeting | Epic 1 | Story 1.03 | TC-FR15-01 | Covered |
-| FR-16: Fabric-manager-configured deployment → router pod gets transit interface + bare-metal mechanism | Epic 4 | Story 4.01, 4.02 | TC-FR16-01, TC-FR16-02 | Covered |
+| FR-16: Fabric-manager-configured deployment → router pod gets transit interface + bare-metal mechanism | Epic 4 | Story 4.01, 4.02, 4.03 | TC-FR16-01, TC-FR16-02 | Covered |
 | FR-17: Adding/removing VM subnet → static route pushed/withdrawn to fabric manager | Epic 5 | Story 5.01 | TC-FR17-01 | Covered |
 | FR-18: Bare-metal subnet relevant → route written to router pod ConfigMap, applied live | Epic 5 | Story 5.02 | TC-FR18-01 | Covered |
 | FR-19: Bidirectional VM ↔ bare-metal connectivity once routes in place | Epic 5 | Story 5.04 | TC-FR19-01 | Covered |

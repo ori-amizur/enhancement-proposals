@@ -34,7 +34,7 @@ Delivers end-to-end VM ↔ bare-metal connectivity by dispatching static routes 
 
 **Testing Approach:** Integration test: add a subnet, verify the route appears in the fabric manager; remove it, verify withdrawal. Unit tests for route construction and the push/withdraw API calls.
 
-**Dependencies:** Story 4.02 (from Epic 4)
+**Dependencies:** Story 4.03 (from Epic 4)
 
 ---
 
@@ -53,7 +53,7 @@ Delivers end-to-end VM ↔ bare-metal connectivity by dispatching static routes 
 
 **Testing Approach:** Integration test: configure a bare-metal subnet route, verify it's applied to the router pod's routing table live. Unit tests for ConfigMap schema extension and route application.
 
-**Dependencies:** Story 2.01 (from Epic 2), Story 4.02 (from Epic 4)
+**Dependencies:** Story 2.01 (from Epic 2), Story 4.03 (from Epic 4)
 
 ---
 
