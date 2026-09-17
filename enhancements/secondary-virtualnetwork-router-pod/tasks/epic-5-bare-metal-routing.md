@@ -103,8 +103,9 @@ implementation and not an additional Epic 4 story.
 **Acceptance Criteria:**
 - [ ] The fabric-side route push/withdraw (Story 5.01) and the router pod ConfigMap update (Story 5.02) are treated as part of the same reconciliation loop, with retry/requeue on failure.
 - [ ] A transient failure on either side does not silently leave the two out of sync — the reconciler retries until both are consistent, or surfaces a clear error/status if it cannot.
+- [ ] `Subnet.status.conditions[type=RoutesReady]` reports whether the router-pod route projection and, when applicable, the explicit fabric-side route have converged.
 
-**Implementation Guidance:** Addresses Risk 6.4 (design.md) directly. Follow the existing requeue pattern already used elsewhere in osac-operator's networking controllers (e.g., the `VirtualMachineReference` precondition check pattern referenced in the Unified Networking design) rather than inventing a new consistency mechanism.
+**Implementation Guidance:** Addresses Risk 6.4 (design.md) directly. Reuse the existing owner and `FabricRouteJobs` AAP job histories, the per-VirtualNetwork Lease, and the provisioning lifecycle's retry/backoff/requeue behavior rather than inventing a second job or locking mechanism. The route condition must distinguish pending, failed, and succeeded states; Phase-1-only or unsupported backends do not receive this condition. This is convergent reconciliation, not a distributed transaction: an intermediate partial state is acceptable only while it is visible and being retried.
 
 **Testing Approach:** Integration tests simulating a failure on one side (e.g., fabric manager API returns an error) and verifying the reconciler retries and eventually converges, or surfaces status clearly if it cannot.
 
@@ -119,11 +120,15 @@ implementation and not an additional Epic 4 story.
 **So that** regressions are caught before release, without affecting Phase 1 behavior.
 
 **Acceptance Criteria:**
-- [ ] E2E scenario: a VM reaches a bare-metal server on the fabric, and the bare-metal server reaches the VM, once both routes are configured.
+- [ ] E2E scenario provisions the complete path: a Netris-backed Secondary VirtualNetwork, a Kubernetes-owned VM Subnet, a VM, a fabric-owned bare-metal Subnet, and a BareMetalInstance.
+- [ ] E2E scenario: the VM reaches the BareMetalInstance on the fabric, and the BareMetalInstance reaches the VM, once both routes are configured.
+- [ ] The VM's `ip route get <bare-metal-IP>` selects the secondary interface and secondary source IP; the test fails if the primary interface is selected.
+- [ ] The BareMetalInstance's route to the VM's secondary IP uses the fabric route toward the router transit path; the test must not pass through the primary network.
+- [ ] Deleting the BareMetalInstance and Subnet withdraws the router-pod and fabric-side routes before the VirtualNetwork is removed.
 - [ ] E2E scenario: on a VirtualNetwork with Phase 2 configured, verify Phase 1 behavior (inter-subnet routing, egress, NAT Gateway if configured) is unaffected.
 - [ ] E2E scenario: deploying Phase 2 (this epic) into an environment with existing Phase-1-only Secondary VirtualNetworks does not change their behavior.
 
-**Testing Approach:** Full e2e suite covering the scenarios above against a real fabric-manager-backed test environment.
+**Testing Approach:** Full e2e suite against a real fabric-manager-backed test environment. Create the VM and BareMetalInstance through their normal OSAC APIs, wait for both Subnets to report `RoutesReady=True`, verify the router-pod route and fabric-side route independently, run bidirectional connectivity checks, and assert route selection with `ip route get` on both endpoints. Use the BMI's fabric-subnet IP as the destination so a primary-network path cannot produce a false positive.
 
 **Dependencies:** Story 5.01, Story 5.02, Story 5.03
 
@@ -146,4 +151,4 @@ implementation and not an additional Epic 4 story.
 
 ## Test Case References
 
-Verified by: TC-FR17-01, TC-FR18-01, TC-FR19-01, TC-FR20-01
+Verified by: TC-FR17-01, TC-FR17-02, TC-FR18-01, TC-FR18-02, TC-FR19-01, TC-FR20-01
