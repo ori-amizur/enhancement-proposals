@@ -417,6 +417,44 @@
 
 ---
 
+### P-1: Secondary Subnet has one immutable backend owner
+
+#### TC-P1-01: Secondary Subnet dispatches to exactly one selected backend
+
+| Story | AC | Priority | Automation |
+|-------|-----|----------|------------|
+| Story 5.00 | AC-1–AC-5 | critical | automated |
+
+##### Preconditions
+
+- A NetworkClass resolves both a fabric manager and a Kubernetes/UDN manager.
+- A Secondary VirtualNetwork references that NetworkClass.
+
+##### Steps
+
+1. Create a Secondary Subnet with `implementationStrategy: cudn_net` and verify
+   only the Kubernetes target receives a provision request.
+2. Create another Secondary Subnet with `implementationStrategy: netris` and
+   verify only the fabric target receives a provision request.
+3. Create a Secondary Subnet without the field and verify the deployment
+   default selects one target rather than both.
+4. Attempt to update the strategy and verify the update is rejected as
+   immutable.
+5. Delete each Subnet after removing or losing the parent VirtualNetwork and
+   verify the persisted owner role selects the same single deprovision target.
+6. Attempt to set the field on a Primary Subnet and verify validation rejects
+   it.
+
+##### Expected Results
+
+- No Secondary Subnet is provisioned by both dispatch targets.
+- The selected implementation strategy and owner role remain visible in the
+  Subnet API/CRD representation needed for lifecycle and deletion.
+- A Kubernetes-owned Subnet does not create a fabric-side route as part of
+  Story 5.01.
+
+---
+
 ### FR-17: Adding/removing VM subnet → static route pushed/withdrawn to fabric manager
 
 #### TC-FR17-01: Adding a VM subnet pushes a static route to the fabric manager
@@ -429,7 +467,8 @@
 - A Secondary VirtualNetwork exists on a Netris/EVPN NetworkClass with a transit interface (TC-FR16-01).
 
 ##### Steps
-1. Create a Subnet (`10.0.1.0/24`) referencing the VirtualNetwork.
+1. Create a fabric-owned Subnet (`10.0.1.0/24`) referencing the VirtualNetwork
+   with `implementationStrategy: netris`.
 2. Query the fabric manager's route table for the VN's VRF.
 3. Delete the Subnet.
 4. Re-query the fabric manager's route table.

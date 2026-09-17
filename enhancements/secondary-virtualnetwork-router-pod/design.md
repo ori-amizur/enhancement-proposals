@@ -3,7 +3,7 @@ title: secondary-virtualnetwork-router-pod
 authors:
   - oamizur@redhat.com
 creation-date: 2026-08-26
-last-updated: 2026-08-26
+last-updated: 2026-09-17
 tracking-link:
   - TBD
 prd: "prd.md"
@@ -94,6 +94,35 @@ provide a supported transit contract, items 7–8 are never provisioned: the
 router pod remains an in-cluster-only gateway providing inter-subnet routing,
 internet egress, and NAT Gateway, and nothing else.
 
+### Secondary Subnet backend ownership (prerequisite for Phase 2)
+
+The parent Secondary VirtualNetwork may need more than one kind of backend. For
+example, a NetworkClass can resolve both a fabric manager for the VN-scoped
+transit interface and a Kubernetes/UDN manager for in-cluster networking. That
+does not mean that one Subnet may be provisioned by both managers. Every
+Secondary Subnet has exactly one implementation owner.
+
+- `Subnet.spec.implementationStrategy` is an optional, immutable tenant-facing
+  field. When present, it names the registered backend manager that owns the
+  Subnet (for example, `netris` or `cudn_net`).
+- The field is valid only when the parent VirtualNetwork has `Secondary`
+  networking. Primary Subnets retain the existing NetworkClass/dispatcher
+  behavior and reject this field.
+- When the field is omitted, the deployment default selects one backend. The
+  current default preserves the existing Netris behavior by selecting the
+  fabric target when one is available; a Kubernetes target is used when the
+  deployment has no fabric target.
+- The operator resolves and persists the selected owner role before starting
+  provisioning. Provision and deprovision are sent to that one target only;
+  a Secondary Subnet is never dual-dispatched. The persisted role also lets
+  deletion target the correct backend if the parent VirtualNetwork has already
+  been removed.
+
+This ownership decision is a prerequisite for Epic 5: Story 5.01 must publish
+routes only for fabric-owned Subnets, while Kubernetes-owned Subnets must not
+be sent to the fabric route backend. It is not a new transit transport and is
+not part of Epic 4's transit-interface lifecycle.
+
 ### Architecture
 
 The diagram below shows a Secondary VirtualNetwork with **Phase 2 deployed** using the current Netris/EVPN backend. On **Phase 1 alone** (no compatible fabric manager), the router pod has only its cluster-net and per-subnet interfaces — no transit interface, no EVPN, no physical fabric box — everything from the transit interface down does not exist.
@@ -159,11 +188,15 @@ The diagram below shows a Secondary VirtualNetwork with **Phase 2 deployed** usi
 #### Subnet creation (Phase 1, live-attach path)
 
 1. Tenant creates a Subnet referencing the VirtualNetwork.
-2. The osac-operator creates the Secondary CUDN for the subnet, targeting the router pod's namespace (and any other namespace with a dual-attached VM, via the shared label).
-3. The operator reserves the subnet's `.1` gateway IP via a persistent IPAMClaim, and patches the router pod's Multus network-attachment annotation to add the new Secondary UDN.
-4. `multus-dynamic-networks-controller` injects the new interface into the running router pod's network namespace.
-5. The router pod's agent detects the new interface (via periodic link inspection or netlink events) and configures it: brings the link up, assigns the reserved `.1` address, and updates its own routing table per the ConfigMap. Port security is patched separately by the operator's `cudn_net` role, not the agent — see Implementation Details ("Port security") and Open Question 10; this live-attach path itself remains blocked on `multus-dynamic-networks-controller` (Open Questions 1, 5, 6) and is not yet built.
-6. The Subnet is marked Ready. No router pod restart occurred.
+2. For a Secondary VirtualNetwork, the operator resolves exactly one Subnet
+   backend from `implementationStrategy` or the deployment default and records
+   the selected owner role. This selection is independent of the VN-scoped
+   transit interface.
+3. The osac-operator creates the Secondary CUDN for the subnet, targeting the router pod's namespace (and any other namespace with a dual-attached VM, via the shared label).
+4. The operator reserves the subnet's `.1` gateway IP via a persistent IPAMClaim, and patches the router pod's Multus network-attachment annotation to add the new Secondary UDN.
+5. `multus-dynamic-networks-controller` injects the new interface into the running router pod's network namespace.
+6. The router pod's agent detects the new interface (via periodic link inspection or netlink events) and configures it: brings the link up, assigns the reserved `.1` address, and updates its own routing table per the ConfigMap. Port security is patched separately by the operator's `cudn_net` role, not the agent — see Implementation Details ("Port security") and Open Question 10; this live-attach path itself remains blocked on `multus-dynamic-networks-controller` (Open Questions 1, 5, 6) and is not yet built.
+7. The Subnet is marked Ready. No router pod restart occurred.
 
 #### Subnet creation (Phase 1, fallback path)
 
@@ -203,7 +236,7 @@ Without a NATGateway configured, this second SNAT step does not exist — traffi
 #### Bare-metal connectivity setup (Phase 2)
 
 1. When a bare-metal subnet on the fabric becomes relevant to the VirtualNetwork, the operator writes a route into the router pod's ConfigMap: `<bare-metal subnet CIDR> via <fabric peer's transit address> dev <transit interface>`. The agent applies it live.
-2. The operator also pushes a static route into the selected fabric manager's existing route-management API: `<VN subnet CIDR> via <router pod's transit address>`, so bare-metal-originated traffic can reach back.
+2. For each fabric-owned VM Subnet, the operator also pushes a static route into the selected fabric manager's existing route-management API: `<VN subnet CIDR> via <router pod's transit address>`, so bare-metal-originated traffic can reach back. A Kubernetes-owned Subnet is not sent to the fabric route backend.
 3. The two directions use a backend-specific transit attachment. In the current Netris implementation, the router pod's transit interface is a genuine EVPN member of this VirtualNetwork's dedicated transit MAC-VRF — allocated and established once at VirtualNetwork creation, and unaffected by individual subnet changes. No transit VPC/VRF, MAC-VRF, VNI, IPAM subnet, or CUDN is shared with another VirtualNetwork. The preferred transit prefix is a provider-configured IPv4 link-local `/24` (for example, `169.254.240.0/24`) and may be reused across separate isolated VPC/VRF domains. Within each `/24`, address ownership is disjoint: the default policy assigns one `/26` to Netris, one `/26` to OSAC/CUDN, and reserves the remaining `/25`. All transit addresses and next hops remain on the same EVPN logical L2 segment; a provider-configured private prefix is used only when compatibility validation shows that link-local addressing is not supported.
 
    A future `agentless_net` implementation would use the same route contract
@@ -225,11 +258,12 @@ bare-metal server → fabric's local gateway → static route (pushed by operato
 
 ### API Extensions
 
-- **VirtualNetwork**: adds a type/mode field (name TBD, e.g. `spec.networkingType`), enum with `Primary` and `Secondary`, immutable after creation, defaulting to `Primary`. This is the only tenant-facing API surface change, and is delivered in Phase 1. Note: `Primary` here names OSAC's existing VirtualNetwork type — it is unrelated to OVN-Kubernetes's own Primary/Secondary UDN distinction, which this feature's router pod uses internally regardless of which VirtualNetwork type a tenant chooses (Section 1's foundation mechanism always uses Secondary UDNs for the router pod, whether the VirtualNetwork itself is `Primary` or `Secondary`).
-- **Subnet, ComputeInstance**: no spec changes. Existing fields (`network_attachments`, etc.) work unchanged; provisioning-side behavior differs based on the parent VirtualNetwork's type.
+- **VirtualNetwork**: adds a type/mode field (name TBD, e.g. `spec.networkingType`), enum with `Primary` and `Secondary`, immutable after creation, defaulting to `Primary`. This is delivered in Phase 1. Note: `Primary` here names OSAC's existing VirtualNetwork type — it is unrelated to OVN-Kubernetes's own Primary/Secondary UDN distinction, which this feature's router pod uses internally regardless of which VirtualNetwork type a tenant chooses (Section 1's foundation mechanism always uses Secondary UDNs for the router pod, whether the VirtualNetwork itself is `Primary` or `Secondary`).
+- **Subnet**: adds optional immutable `spec.implementationStrategy`. It is valid only for a Subnet whose parent VirtualNetwork has `Secondary` networking and selects the single registered backend manager that owns that Subnet. When omitted, the deployment default is used. This is a per-Subnet ownership choice; it does not change the VN-scoped transit interface.
+- **ComputeInstance**: no spec changes. Existing fields (`network_attachments`, etc.) work unchanged; provisioning-side behavior differs based on the parent VirtualNetwork's type.
 - **NATGateway**: no spec changes — the existing `virtual_network`/`external_ip` fields are reused as-is (Phase 1). Only the operator's internal implementation differs for a fabric-manager-less target VirtualNetwork (EgressIP instead of a fabric-side SNAT rule).
 - The router pod, its ConfigMap, the VirtualNetwork-scoped transit attachment and fabric references (Phase 2), the Secondary CUDNs' shared-label targeting, and the EgressIP resource backing a fabric-manager-less NATGateway (Phase 1) are internal resources managed by the operator — not exposed in the tenant API. The current transit attachment is an EVPN CUDN for Netris; a future backend may publish a different internal contract such as a VLAN/LocalNet attachment.
-- No new CRDs. `multus-dynamic-networks-controller`'s own resources (Phase 1) and OVN-Kubernetes's existing `EgressIP` CRD (Phase 1) are external dependencies, not OSAC API extensions.
+- No new CRD kinds. The existing OSAC `Subnet` CRD is extended with the ownership field; `multus-dynamic-networks-controller`'s own resources (Phase 1) and OVN-Kubernetes's existing `EgressIP` CRD (Phase 1) are external dependencies, not OSAC API extensions.
 
 ### Implementation Details/Notes/Constraints
 
@@ -242,19 +276,32 @@ bare-metal server → fabric's local gateway → static route (pushed by operato
 - **DNS resolution**: a VM has exactly one `/etc/resolv.conf`, so the two cases from "VMs that also need network access outside this VirtualNetwork" (Section 1) are handled differently. A VM with a Primary UDN attachment elsewhere gets its DNS configuration entirely from that attachment's existing mechanism — nothing is injected for the Secondary VN subnet, to avoid conflicting with it. A VM with only Secondary VN subnets has DNS resolver configuration injected via the same cloud-init mechanism as the default route: the operator (or agent) reads the router pod's own `/etc/resolv.conf` — an ordinary pod using the default Kubernetes DNS policy, so it already contains the cluster's CoreDNS ClusterIP and standard search domains — and passes that content through unchanged into the VM's cloud-init network-config. This works because DNS queries the VM sends are forwarded through the router pod's cluster-network interface the same way any other non-inter-subnet, non-bare-metal traffic is (see the SNAT note below), and Kubernetes Service routing (OVN's destination-based ClusterIP DNAT) applies to that forwarded traffic the same way it would to traffic the router pod originated itself — this needs confirming for genuinely forwarded (not pod-process-originated) traffic (Open Questions).
 - **Cluster-network egress SNAT is unconditional, not destination-dependent**: the router pod's cluster-network interface is an ordinary OVN logical switch port with default port security, which only allows egress traffic whose source IP matches the port's own registered address. Any traffic the router pod forwards out that interface — whether destined to a cluster-internal Service ClusterIP or to a genuinely external address — must first be SNATed to the router pod's own pod IP, or OVN drops it at the port. This SNAT rule should be a single, uniform "rewrite source to my own IP" applied to everything leaving via that interface, not something that tries to distinguish internal from external destinations first. Once SNATed, the packet is indistinguishable from any other traffic the router pod's own process might have sent, and the existing cluster networking stack already handles both cases correctly without any further help from the router pod: OVN's own Service load-balancing applies to cluster-internal destinations, and the node's pre-existing external-masquerade rule (which already excludes cluster-internal CIDRs, a prerequisite for basic cluster networking generally) applies to genuinely external ones. No additional exclusion logic is needed in the router pod's own rules.
 - **The agent never discovers subnet state on its own.** The operator is the authoritative source of every subnet's existence, CIDR, and type — it is the controller that provisions the `Subnet` resource in the first place — so the agent's role is purely to apply whatever the operator has written to the ConfigMap: gateway IPs, per-subnet routes, and port-security patches (plus, in Phase 2, fabric-reachable routes). It does not query the fulfillment-service or watch `Subnet` resources itself.
+- **Secondary Subnet backend ownership**: the operator is also authoritative for
+  the selected implementation strategy. A Secondary Subnet has one immutable
+  owner, resolved from the explicit `spec.implementationStrategy` or the
+  deployment default. The parent VN may use both fabric and Kubernetes
+  managers for different resources, but the same Secondary Subnet is never
+  provisioned or deleted through both paths. The selected role is persisted on
+  the Subnet so deletion remains deterministic even when the parent VN is gone.
 - **Live attachment mechanism**: the operator patches the router pod's Multus network-attachment annotation to add or remove a Secondary UDN reference; `multus-dynamic-networks-controller` (an upstream Kubernetes Network Plumbing Working Group project, not an OpenShift-documented capability for non-VM pods — see Risks) observes the annotation change and injects/removes the interface in the running pod's network namespace. The agent is responsible for noticing the interface and completing its configuration — the controller only handles the netlink-level attachment, not IP/route/port-security setup.
 - **Fallback trigger**: the operator detects that live attachment is unavailable either through a one-time capability probe (checking for the controller's deployment/CRDs when a VirtualNetwork is first provisioned as Secondary) or by timing out a per-change wait for the new interface to appear (Open Questions cover the trade-off between these).
 - **NAT Gateway via EgressIP**: implemented entirely as an OVN-Kubernetes `EgressIP` resource selecting the router pod's namespace (and pod, for defense in depth), with no changes inside the router pod or its agent. This relies on VMs never having a cluster/pod-network presence (they attach only to their subnet's Secondary UDN), so the router pod is the only entity in its namespace an EgressIP selector could match. The ExternalIPPool address assigned to the NATGateway must be hostable on some node's own network — this is not a new requirement introduced by this design, but the same existing admin-provisioning pattern already used for every NetworkClass's ExternalIPPool (CIDRs chosen to suit that NetworkClass's actual routing mechanism), applied here to node-level EgressIP assignment instead of fabric BGP/DNAT (Open Questions).
 
 #### Phase 2
 
+- **Secondary Subnet dispatch selection**: route dispatch is conditional on the
+  Subnet's owner. Story 5.01 publishes routes only for Subnets owned by the
+  selected fabric backend; a Kubernetes-owned Subnet remains on the
+  Kubernetes/UDN path and is not published to the fabric. The immutable
+  per-Subnet selection is defined above and implemented before the route
+  dispatch stories.
 - **Fabric-manager-conditional provisioning**: the operator resolves the VirtualNetwork's target NetworkClass and provisions a transit interface and static-route dispatch only when the selected fabric manager advertises or otherwise provides a supported transit contract. The current supported contract is Netris/EVPN. A configured fabric manager with an unsupported transport does not implicitly select EVPN and leaves the router pod on the Phase-1-only path. This is a provisioning-time decision made once, at VirtualNetwork creation — it cannot change over the VirtualNetwork's lifetime without recreating it, since it determines whether the transit interface exists at all. The exact NetworkClass field/representation used to determine "no fabric manager" needs to be confirmed against the current NetworkClass API (Open Questions) — OSAC's existing Unified Networking model generally treats `fabricManager` as a required NetworkClass field, so this may correspond to a distinct NetworkClass configuration (e.g., a pure `udn-net`-style class) rather than an optional/empty value on the same field other NetworkClasses use.
 - **Backend-neutral transit contract**: the fabric-side role publishes a VN-scoped contract consumed by the Kubernetes-side manager. The contract identifies the transport and the attachment data needed to realize it, while backend-specific fields remain opaque to the generic controller. For Netris, the contract contains the EVPN CUDN inputs (transit CIDR, Netris and OSAC pools, MAC-VRF VNI, VTEP, CUDN name, and persistent IPAMClaim name). A future `agentless_net` contract could contain a VLAN ID, physical-network/localnet identity, transit CIDR, net-node routing-namespace endpoint, and return-route inputs; it would be realized as a tagged LocalNet CUDN. Unknown or unsupported transport values fail clearly before the router pod is declared ready.
 - **VirtualNetwork-scoped transit allocation and isolation**: for each fabric-backed Secondary VirtualNetwork, the selected backend obtains its own transit resources through the fabric-manager API. In the current Netris implementation, OSAC obtains an isolated VPC/VRF, a transit IPAM subnet, a unique MAC-VRF/VNI, and required fabric-port/site associations. The preferred transit prefix is a provider-configured IPv4 link-local `/24` (for example, `169.254.240.0/24`), statically allocated through IPAM rather than through automatic APIPA behavior. OSAC must validate that both Netris and the target OVN-Kubernetes CUDN accept the prefix; if they do not, it uses a provider-configured private prefix. The selected prefix may be reused by multiple VirtualNetworks when their VPC/VRF domains are isolated; within one VPC/VRF, it must not overlap the VN CIDR, another transit subnet, platform-reserved link-local addresses, or other fabric-reserved ranges. The same prefix is used by the fabric IPAM subnet and that VN's Primary EVPN CUDN. The transit resources other than the prefix are never shared between VirtualNetworks. A future agentless backend would allocate a VN-specific VLAN and terminate it in the VN's routing namespace on the net-node instead of allocating an EVPN MAC-VRF/VNI.
 - **Disjoint transit address ownership**: the Netris IPAM allocator and the CUDN IPAM allocator must never operate over the same address pool. The default provider policy divides each selected `/24` into a Netris-owned `/26`, an OSAC/CUDN-owned `/26`, and a reserved `/25`. Netris must enforce allocation within its `/26`; CUDN `reservedSubnets` must exclude the Netris `/26` and the reserved `/25`, leaving only the OSAC `/26` available to the router's persistent IPAMClaim. The implementation must validate containment, non-overlap, and capacity. Reading Netris's currently allocated hosts is a diagnostic check only and is not a substitute for an enforced allocation boundary. Pool sizes and ranges remain provider-controlled; exposing them to tenants is future work.
 - **Transit address persistence**: uses IPAMClaim with `ipam.lifecycle: Persistent`, so the router pod recovers the same transit address across restarts and reschedules.
 - **Bare-metal transit interface**: in the current Netris implementation, a VirtualNetwork-specific Primary CUDN with EVPN transport, MAC-VRF only (no IP-VRF), reaches that VirtualNetwork's dedicated transit MAC-VRF. This interface is created once at VirtualNetwork creation and is not affected by individual subnet changes. A future backend may use a different CUDN topology while preserving the same one-transit-interface-per-VN lifecycle.
-- **Static route dispatch**: the operator pushes/withdraws fabric-side routes through the fabric manager's existing route-management API (the same mechanism already used for VPCs, routes, and NAT rules) as part of the same reconciliation loop that updates the router pod's ConfigMap, so the two stay consistent (Risks).
+- **Static route dispatch**: for each fabric-owned VM Subnet, the operator pushes/withdraws fabric-side routes through the fabric manager's existing route-management API (the same mechanism already used for VPCs, routes, and NAT rules) as part of the same reconciliation loop that updates the router pod's ConfigMap, so the two stay consistent (Risks). Kubernetes-owned Subnets are excluded from this fabric route path.
 - **Transit lifecycle**: the operator/AAP records how to locate each VN's fabric resources — either by persisting their identifiers (location TBD: VirtualNetwork status, an annotation, or a separate resource — Open Question 11) or by deriving deterministic names from the VirtualNetwork identity and confirming them against the fabric API on each reconcile, avoiding persisted state entirely if Netris's naming constraints allow it. It waits for the fabric network and CUDN to become usable, and withdraws routes before deleting the VN-specific CUDN/IPAMClaim and OSAC-owned fabric transit resources — see below for what happens when that deletion cannot complete. A provider/fabric lock may serialize API operations, but it must not merge the VN-specific isolation domains, and — see Risks — a lock that is structurally present in the code is not evidence it actually serializes anything; that must be demonstrated under genuine concurrent reconciliation, not inferred from the lock's design.
 - **Stuck transit teardown**: if the fabric API rejects or repeatedly fails a VN-specific transit resource's deletion (e.g., a VPC/VRF the fabric considers still in use), the VirtualNetwork surfaces a distinct, dedicated status condition for this (e.g., `TransitTeardownStuck` or equivalent — naming TBD), separate from the general reconcile-error/event stream, so this state cannot be mistaken for ordinary retry-and-recover transience or missed entirely. Generic status/event logging alone is not sufficient here: the resources involved are provider-billed/quota-consuming fabric infrastructure, not inert Kubernetes objects, so a silently-retrying failure has an ongoing cost distinct from a stuck Kubernetes object.
 

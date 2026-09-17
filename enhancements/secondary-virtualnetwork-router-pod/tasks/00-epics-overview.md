@@ -14,7 +14,7 @@ Requirement IDs (FR-N) are assigned sequentially from the PRD's Acceptance Crite
 | 2 | [Live Subnet Attach/Detach](epic-2-live-attach.md) | M | 1 | FR-9–FR-13 | Epic 1 |
 | 3 | [NAT Gateway via EgressIP](epic-3-nat-gateway.md) | S | 1 | FR-7, FR-8 | Epic 1 |
 | 4 | [Fabric Manager Transit Contract & Netris EVPN Interface](epic-4-transit-interface.md) | M | 2 | FR-16 | Epic 1 |
-| 5 | [Bidirectional Bare-Metal Route Dispatch](epic-5-bare-metal-routing.md) | L | 2 | FR-17–FR-20 | Epic 4 |
+| 5 | [Bidirectional Bare-Metal Route Dispatch](epic-5-bare-metal-routing.md) | L | 2 | P-1, FR-17–FR-20 | Epic 4 + Story 5.00 |
 
 No epic sizes to XXL — no splits required beyond the two-epic split already applied within each phase (foundation vs. live-attach optimization; transit-interface provisioning vs. route dispatch).
 
@@ -27,10 +27,10 @@ Epic 1 (Foundation)
   ├── Epic 2 (Live Attach/Detach)       — optimizes Epic 1's subnet lifecycle, no other epic depends on it
   ├── Epic 3 (NAT Gateway)              — independent of Epic 2, can run in parallel with it
   └── Epic 4 (Transit Interface)        — independent of Epics 2/3, can run in parallel with them
-        └── Epic 5 (Bare-Metal Routing) — requires Epic 4's transit interface to exist
+        └── Epic 5 (Bare-Metal Routing) — starts with Story 5.00 (per-Subnet backend ownership), then requires Epic 4's transit interface
 ```
 
-Recommended order: **Epic 1 first** (nothing else can start without the router pod existing). Once Epic 1 is done, **Epics 2, 3, and 4 can proceed in parallel** — they touch different parts of the router pod (agent/attach logic, NAT/EgressIP, transit interface) and don't share implementation surface. **Epic 5 requires Epic 4** to be complete (it dispatches routes over the transit interface Epic 4 provisions).
+Recommended order: **Epic 1 first** (nothing else can start without the router pod existing). Once Epic 1 is done, **Epics 2, 3, and 4 can proceed in parallel** — they touch different parts of the router pod (agent/attach logic, NAT/EgressIP, transit interface) and don't share implementation surface. **Story 5.00 is the first story in Epic 5** and establishes the one-owner-per-Secondary-Subnet contract. Stories 5.01 and 5.02 then require Story 5.00 and Epic 4's transit interface; they dispatch routes only for fabric-owned Subnets.
 
 Phase 1 (Epics 1–3) is independently shippable and delivers complete value with no fabric manager involved. Phase 2 (Epics 4–5) is additive and requires Phase 1 (specifically Epic 1) to already be in place; it does not require Epics 2 or 3.
 
@@ -40,4 +40,4 @@ Phase 1 (Epics 1–3) is independently shippable and delivers complete value wit
 - **Epic 2**: 2.01 (agent) can start in parallel with 2.02 (live-attach patch logic) since they're different code paths that converge in 2.03 (fallback trigger, which needs both). 2.04/2.05 follow.
 - **Epic 3**: fully sequential, small epic.
 - **Epic 4**: 4.01 (NetworkClass manager and transit-capability detection) must land before 4.02 (OSAC-managed VirtualNetwork-scoped Netris EVPN transit lifecycle), followed by 4.03 (Netris EVPN interface provisioning) and 4.04 (QE validation). Other fabric-manager transports, such as an `agentless_net` VLAN/LocalNet transit path to a net-node routing namespace, require a separate backend implementation and test scope.
-- **Epic 5**: 5.01 and 5.02 can proceed in parallel (they're the two directions of the same route-dispatch mechanism); 5.03 (reconciliation consistency) depends on both; 5.04/5.05 follow.
+- **Epic 5**: 5.00 (per-Subnet backend ownership) comes first. After it and Epic 4 are complete, 5.01 and 5.02 can proceed in parallel (they're the two directions of the same route-dispatch mechanism); 5.03 (reconciliation consistency) depends on both; 5.04/5.05 follow.

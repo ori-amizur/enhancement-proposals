@@ -2,22 +2,58 @@
 
 - **T-Shirt Size:** L
 - **Phase:** 2
-- **PRD Requirements:** FR-17, FR-18, FR-19, FR-20
+- **PRD Requirements:** P-1 prerequisite, FR-17, FR-18, FR-19, FR-20
 - **Design Reference:** design.md §Proposal (Phase 2, item 8), §Workflow Description ("Bare-metal connectivity setup"), §Implementation Details/Notes/Constraints ("Backend-neutral transit contract", "Static route dispatch"), Risk 6.4/6.5
-- **Dependencies:** Epic 4
+- **Dependencies:** Epic 4 and Story 5.00 (Secondary Subnet backend ownership)
 
 ## Summary
 
-Delivers end-to-end VM ↔ bare-metal connectivity by dispatching static routes in both directions: from the router pod's VN subnets to the selected fabric manager, and from bare-metal subnets into the router pod's own ConfigMap. This is the epic that makes Epic 4's backend-specific transit interface actually useful. The current execution target is the Netris/EVPN transit contract; the route model is intentionally independent of whether a future backend uses EVPN or a VLAN/LocalNet path.
+Delivers end-to-end VM ↔ bare-metal connectivity by dispatching static routes in both directions: from fabric-owned router-pod VN subnets to the selected fabric manager, and from bare-metal subnets into the router pod's own ConfigMap. Kubernetes-owned Secondary Subnets remain on the Kubernetes/UDN path and are not sent to the fabric route backend. This is the epic that makes Epic 4's backend-specific transit interface actually useful. The current execution target is the Netris/EVPN transit contract; the route model is intentionally independent of whether a future backend uses EVPN or a VLAN/LocalNet path.
 
 ## Acceptance Criteria
 
-- [ ] Adding a VM subnet results in the operator pushing a static route for that subnet's CIDR into the fabric manager, with the router pod's transit address as next-hop; removing it withdraws the route.
+- [ ] Adding a fabric-owned VM Subnet results in the operator pushing a static route for that subnet's CIDR into the fabric manager, with the router pod's transit address as next-hop; removing it withdraws the route. Kubernetes-owned Secondary Subnets are not sent to the fabric route backend.
 - [ ] When a bare-metal subnet becomes relevant to the VirtualNetwork, the operator writes the corresponding route into the router pod's ConfigMap, applied live by the agent.
 - [ ] A VM on any subnet can reach a bare-metal server on the fabric, and vice versa, once both routes are in place.
 - [ ] Deploying this epic does not change behavior for any Phase-1-only (fabric-manager-less) Secondary VirtualNetwork.
 
 ## Stories
+
+### Story 5.00: [DEV] Secondary Subnet backend ownership and dispatch selection
+
+**As a** provider,
+**I want to** assign each Secondary Subnet exactly one immutable backend owner,
+**So that** later fabric route dispatch is unambiguous and the same Subnet is
+never provisioned by both the fabric and Kubernetes backends.
+
+**Acceptance Criteria:**
+- [ ] `Subnet.spec.implementationStrategy` is optional and immutable, and is
+  accepted only when the parent VirtualNetwork uses `Secondary` networking.
+- [ ] An explicit value resolves to exactly one registered backend manager. An
+  omitted value uses the deployment default: the current default selects the
+  fabric target when available and otherwise the Kubernetes target.
+- [ ] A Secondary Subnet is provisioned and deprovisioned through one target
+  only, even when the parent NetworkClass resolves both fabric and Kubernetes
+  managers.
+- [ ] The selected owner role is persisted so deletion remains deterministic
+  if the parent VirtualNetwork is already gone.
+- [ ] Primary Subnets retain their existing dispatcher behavior, and an
+  implementation strategy is rejected for them.
+
+**Implementation Scope:** Extend the public/private Subnet API and operator
+CRD, fulfillment-service validation/mapping, and CLI creation flow; select one
+dispatcher target in the operator; persist the selected role for deletion; and
+expose the field in the normal Subnet views.
+
+**Testing Approach:** API scope and immutability tests; CLI request-building
+tests; operator tests proving explicit/default selection, one-target
+provision/deprovision, and Primary-network rejection.
+
+**Dependencies:** Epic 1 dispatcher and NetworkClass foundations. This is a
+cross-cutting prerequisite for Stories 5.01–5.03, not a transit-interface
+implementation and not an additional Epic 4 story.
+
+---
 
 ### Story 5.01: [DEV] Static route dispatch to the fabric manager
 
@@ -26,15 +62,16 @@ Delivers end-to-end VM ↔ bare-metal connectivity by dispatching static routes 
 **So that** bare-metal servers can route back to VMs.
 
 **Acceptance Criteria:**
-- [ ] Adding a VM subnet to a supported fabric-manager-backed Secondary VirtualNetwork pushes a static route into the selected fabric manager's existing route-management API: the subnet's CIDR via the router pod's transit-interface address. The current supported backend is Netris/EVPN.
+- [ ] Adding a fabric-owned VM Subnet to a supported fabric-manager-backed Secondary VirtualNetwork pushes a static route into the selected fabric manager's existing route-management API: the subnet's CIDR via the router pod's transit-interface address. The current supported backend is Netris/EVPN.
 - [ ] Removing the subnet withdraws that route.
+- [ ] Adding or removing a Kubernetes-owned Secondary Subnet does not create or withdraw a fabric-side route through this story.
 - [ ] This uses the same dispatcher mechanism already used to manage the fabric manager's VPCs, routes, and NAT rules elsewhere in OSAC — not a new integration surface.
 
 **Implementation Guidance:** Extend the same reconciliation loop that already updates the router pod's ConfigMap (Epic 1/2) to also push/withdraw this route as part of the same subnet add/remove flow, so the two stay consistent (see Story 5.03).
 
 **Testing Approach:** Integration test: add a subnet, verify the route appears in the fabric manager; remove it, verify withdrawal. Unit tests for route construction and the push/withdraw API calls.
 
-**Dependencies:** Story 4.03 (from Epic 4)
+**Dependencies:** Story 5.00, Story 4.03 (from Epic 4)
 
 ---
 
@@ -53,7 +90,7 @@ Delivers end-to-end VM ↔ bare-metal connectivity by dispatching static routes 
 
 **Testing Approach:** Integration test: configure a bare-metal subnet route, verify it's applied to the router pod's routing table live. Unit tests for ConfigMap schema extension and route application.
 
-**Dependencies:** Story 2.01 (from Epic 2), Story 4.03 (from Epic 4)
+**Dependencies:** Story 5.00, Story 2.01 (from Epic 2), Story 4.03 (from Epic 4)
 
 ---
 

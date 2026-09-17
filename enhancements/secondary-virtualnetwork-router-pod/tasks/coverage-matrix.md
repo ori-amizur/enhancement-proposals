@@ -29,9 +29,23 @@ Requirement IDs are assigned sequentially from the PRD's Acceptance Criteria (§
 | FR-21: DNS resolution — Secondary-VN-only VMs mirror the router pod's own `/etc/resolv.conf` via cloud-init; dual-attached VMs are unaffected (Primary attachment's DNS applies) | Epic 1 | Story 1.04 | TC-FR21-01, TC-FR21-02 | Covered |
 | FR-22: Route scope to `.1` via cloud-init — full default route for Secondary-VN-only VMs; VN-CIDR-scoped route (not a default route) for dual-attached VMs, so the Primary attachment's default route is never overridden | Epic 1 | Story 1.04 | TC-FR22-01, TC-FR22-02 | Covered |
 
+## Cross-Cutting Prerequisite
+
+The following contract is required before Epic 5 route dispatch, but is kept
+outside the numbered PRD requirements so the existing FR identifiers remain
+stable:
+
+| Contract | Epic/Story | Test Coverage | Status |
+|---|---|---|---|
+| P-1: Every Secondary Subnet has exactly one immutable backend owner; an explicit `implementationStrategy` selects a registered manager, omission uses the deployment default, and Primary Subnets retain existing behavior | Epic 5, Story 5.00 | API scope/immutability, CLI mapping, explicit/default dispatch selection, one-target lifecycle, Primary rejection | Covered |
+
 ## Gaps
 
-All PRD requirements are covered by the decomposition. Two items from the PRD's Risks/Open Questions are deliberately *not* independent requirements with their own test cases, since they're process/documentation items rather than behavioral requirements:
+All numbered PRD requirements are covered by the decomposition. P-1 above is a
+cross-cutting prerequisite rather than a new numbered FR. Two items from the
+PRD's Risks/Open Questions are deliberately *not* independent requirements
+with their own test cases, since they're process/documentation items rather
+than behavioral requirements:
 
 - Open Question 6 (Section 4.01/Story 1.05, Epic 4 Story 4.01): confirming the NetworkClass representation of "no fabric manager" is implementation groundwork for FR-6 and FR-16, not a separately testable behavior.
 - Risk 6.6 (unsupported `multus-dynamic-networks-controller` dependency, Epic 2): a product/support sign-off item, not a behavioral requirement — tracked via Story 2.05 (DOCS) rather than a test case.
@@ -39,4 +53,5 @@ All PRD requirements are covered by the decomposition. Two items from the PRD's 
 ## Stories Without PRD Traceability
 
 - Story 1.07, 2.05, 3.03, 5.05 (all `[DOCS]`): documentation stories don't map to a single behavioral PRD requirement — each documents the user-facing surface introduced by its epic's `[DEV]` stories. Justified per the decompose skill's guidance that `[DOCS]` stories are documentation-outcome-oriented, not behavioral.
+- Story 5.00: maps to cross-cutting prerequisite P-1 rather than a numbered FR. It defines the one-owner-per-Secondary-Subnet contract required to make FR-17/FR-18 route dispatch unambiguous.
 - Story 5.03 (reconciliation consistency): addresses Risk 6.4 directly rather than a numbered PRD Acceptance Criterion. Justified as necessary implementation work to make FR-17/FR-18 reliable under partial failure, called out explicitly as a risk in the PRD.
