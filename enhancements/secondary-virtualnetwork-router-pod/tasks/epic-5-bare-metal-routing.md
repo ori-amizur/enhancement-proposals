@@ -8,12 +8,12 @@
 
 ## Summary
 
-Delivers end-to-end VM ↔ bare-metal connectivity by dispatching static routes in both directions: from fabric-owned router-pod VN subnets to the selected fabric manager, and from bare-metal subnets into the router pod's own ConfigMap. Kubernetes-owned Secondary Subnets remain on the Kubernetes/UDN path and are not sent to the fabric route backend. This is the epic that makes Epic 4's backend-specific transit interface actually useful. The current execution target is the Netris/EVPN transit contract; the route model is intentionally independent of whether a future backend uses EVPN or a VLAN/LocalNet path.
+Delivers end-to-end VM ↔ bare-metal connectivity by dispatching static routes in both directions: from Kubernetes-owned VM subnets to the selected fabric manager, and from fabric-owned bare-metal subnets into the router pod's own ConfigMap. Every Secondary Subnet has exactly one immutable owner. A Kubernetes-owned Subnet therefore receives an explicit fabric-side route, while a fabric-owned Subnet is represented natively by the fabric and contributes a route toward the fabric from the router pod; the same Subnet is never provisioned by both backends. This is the epic that makes Epic 4's backend-specific transit interface actually useful. The current execution target is the Netris/EVPN transit contract; the route model is intentionally independent of whether a future backend uses EVPN or a VLAN/LocalNet path.
 
 ## Acceptance Criteria
 
-- [ ] Adding a fabric-owned VM Subnet results in the operator pushing a static route for that subnet's CIDR into the fabric manager, with the router pod's transit address as next-hop; removing it withdraws the route. Kubernetes-owned Secondary Subnets are not sent to the fabric route backend.
-- [ ] When a bare-metal subnet becomes relevant to the VirtualNetwork, the operator writes the corresponding route into the router pod's ConfigMap, applied live by the agent.
+- [ ] Adding a Kubernetes-owned VM Subnet to a supported fabric-manager-backed Secondary VirtualNetwork results in the operator pushing a static route for that subnet's CIDR into the fabric manager, with the router pod's transit address as next-hop; removing it withdraws the route. Fabric-owned Subnets are not sent through this explicit fabric-route path because the fabric already owns their representation.
+- [ ] When a fabric-owned bare-metal Subnet becomes relevant to the VirtualNetwork, the operator writes the corresponding route into the router pod's ConfigMap, applied live by the agent.
 - [ ] A VM on any subnet can reach a bare-metal server on the fabric, and vice versa, once both routes are in place.
 - [ ] Deploying this epic does not change behavior for any Phase-1-only (fabric-manager-less) Secondary VirtualNetwork.
 
@@ -59,15 +59,15 @@ implementation and not an additional Epic 4 story.
 
 **As a** provider,
 **I want to** have VM subnet CIDRs published to the fabric automatically,
-**So that** bare-metal servers can route back to VMs.
+**So that** bare-metal servers can route back to VMs on Kubernetes-owned Subnets.
 
 **Acceptance Criteria:**
-- [ ] Adding a fabric-owned VM Subnet to a supported fabric-manager-backed Secondary VirtualNetwork pushes a static route into the selected fabric manager's existing route-management API: the subnet's CIDR via the router pod's transit-interface address. The current supported backend is Netris/EVPN.
+- [ ] Adding a Kubernetes-owned VM Subnet to a supported fabric-manager-backed Secondary VirtualNetwork pushes a static route into the selected fabric manager's existing route-management API: the subnet's CIDR via the router pod's transit-interface address. The current supported backend is Netris/EVPN.
 - [ ] Removing the subnet withdraws that route.
-- [ ] Adding or removing a Kubernetes-owned Secondary Subnet does not create or withdraw a fabric-side route through this story.
+- [ ] Adding or removing a fabric-owned Secondary Subnet does not create or withdraw this explicit fabric-side route; its native fabric representation remains managed by the selected fabric backend.
 - [ ] This uses the same dispatcher mechanism already used to manage the fabric manager's VPCs, routes, and NAT rules elsewhere in OSAC — not a new integration surface.
 
-**Implementation Guidance:** Extend the same reconciliation loop that already updates the router pod's ConfigMap (Epic 1/2) to also push/withdraw this route as part of the same subnet add/remove flow, so the two stay consistent (see Story 5.03).
+**Implementation Guidance:** Extend the Subnet reconciliation lifecycle with an independent route-only fabric target. The route intent must remain separate from Subnet ownership: the Kubernetes-owned Subnet is provisioned by Kubernetes, while its CIDR is additionally published through the selected fabric manager. Persist route job history and the selected manager so deletion remains deterministic (see Story 5.03 for cross-direction consistency).
 
 **Testing Approach:** Integration test: add a subnet, verify the route appears in the fabric manager; remove it, verify withdrawal. Unit tests for route construction and the push/withdraw API calls.
 
@@ -78,15 +78,15 @@ implementation and not an additional Epic 4 story.
 ### Story 5.02: [DEV] Bare-metal-subnet route delivery to the router pod
 
 **As a** provider,
-**I want to** have bare-metal subnet routes delivered into the router pod automatically,
+**I want to** have fabric-owned bare-metal subnet routes delivered into the router pod automatically,
 **So that** VMs can reach bare-metal servers without manual configuration.
 
 **Acceptance Criteria:**
-- [ ] When a bare-metal subnet becomes relevant to the VirtualNetwork, the operator writes a route into the router pod's ConfigMap: the bare-metal subnet's CIDR via the fabric peer's transit address, over the transit interface.
+- [ ] When a fabric-owned bare-metal Subnet becomes relevant to the VirtualNetwork, the operator writes a route into the router pod's ConfigMap: the bare-metal subnet's CIDR via the authoritative fabric peer transit address(es), over the transit interface.
 - [ ] The agent applies this route live, without a router pod restart.
-- [ ] The operator determines this route's content from its own authoritative Subnet CR state, never from a discovery mechanism.
+- [ ] The operator determines the destination CIDR and ownership from authoritative Subnet CR state, and obtains only the backend-specific transit peer data from the persisted transit contract; it never discovers bare-metal subnets from the fabric.
 
-**Implementation Guidance:** Extend the agent's ConfigMap schema (Epic 2, Story 2.01) to include fabric-reachable routes alongside the existing per-subnet routes — this is an additive change to an existing reconciliation path, not a new agent capability.
+**Implementation Guidance:** Reuse the existing `RouteSpec`/`routes` ConfigMap contract and live route reconciler. Add a backend-neutral aggregate route projection that is invoked by both Kubernetes and fabric Subnet lifecycles, protected by the per-VirtualNetwork mutation Lease. The current Netris implementation publishes the peer transit address(es) in the VN-scoped transit contract; a future backend supplies the same route intent through its own contract without changing the agent.
 
 **Testing Approach:** Integration test: configure a bare-metal subnet route, verify it's applied to the router pod's routing table live. Unit tests for ConfigMap schema extension and route application.
 
