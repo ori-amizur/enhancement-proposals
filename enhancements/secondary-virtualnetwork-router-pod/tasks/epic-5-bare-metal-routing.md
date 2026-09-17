@@ -3,12 +3,12 @@
 - **T-Shirt Size:** L
 - **Phase:** 2
 - **PRD Requirements:** FR-17, FR-18, FR-19, FR-20
-- **Design Reference:** design.md §Proposal (Phase 2, item 8), §Workflow Description ("Bare-metal connectivity setup"), §Implementation Details/Notes/Constraints ("Static route dispatch"), Risk 6.4/6.5
+- **Design Reference:** design.md §Proposal (Phase 2, item 8), §Workflow Description ("Bare-metal connectivity setup"), §Implementation Details/Notes/Constraints ("Backend-neutral transit contract", "Static route dispatch"), Risk 6.4/6.5
 - **Dependencies:** Epic 4
 
 ## Summary
 
-Delivers end-to-end VM ↔ bare-metal connectivity by dispatching static routes in both directions: from the router pod's VN subnets to the fabric manager, and from bare-metal subnets into the router pod's own ConfigMap. This is the epic that makes Epic 4's transit interface actually useful.
+Delivers end-to-end VM ↔ bare-metal connectivity by dispatching static routes in both directions: from the router pod's VN subnets to the selected fabric manager, and from bare-metal subnets into the router pod's own ConfigMap. This is the epic that makes Epic 4's backend-specific transit interface actually useful. The current execution target is the Netris/EVPN transit contract; the route model is intentionally independent of whether a future backend uses EVPN or a VLAN/LocalNet path.
 
 ## Acceptance Criteria
 
@@ -26,7 +26,7 @@ Delivers end-to-end VM ↔ bare-metal connectivity by dispatching static routes 
 **So that** bare-metal servers can route back to VMs.
 
 **Acceptance Criteria:**
-- [ ] Adding a VM subnet to a fabric-manager-backed Secondary VirtualNetwork pushes a static route into the fabric manager's existing route-management API: the subnet's CIDR via the router pod's transit-interface address.
+- [ ] Adding a VM subnet to a supported fabric-manager-backed Secondary VirtualNetwork pushes a static route into the selected fabric manager's existing route-management API: the subnet's CIDR via the router pod's transit-interface address. The current supported backend is Netris/EVPN.
 - [ ] Removing the subnet withdraws that route.
 - [ ] This uses the same dispatcher mechanism already used to manage the fabric manager's VPCs, routes, and NAT rules elsewhere in OSAC — not a new integration surface.
 
@@ -98,7 +98,7 @@ Delivers end-to-end VM ↔ bare-metal connectivity by dispatching static routes 
 **I want to** understand how bare-metal connectivity is configured and how to troubleshoot it,
 **So that** I can operate and support this capability.
 
-**Documentation Scope:** Readers need to understand: the two-route-direction model (VN→fabric and fabric→router-pod); how to verify both routes exist when troubleshooting unreachable bare-metal servers; the EVPN Type-2 MAC re-advertisement consideration after a router pod restart (Open Question 3); the deletion ordering expected for a VirtualNetwork with bare-metal connectivity configured (routes withdrawn before pod/namespace teardown).
+**Documentation Scope:** Readers need to understand: the two-route-direction model (VN→fabric and fabric→router-pod); how to verify both routes exist when troubleshooting unreachable bare-metal servers; the current Netris EVPN Type-2 MAC re-advertisement consideration after a router pod restart (Open Question 3); that a future VLAN/LocalNet backend may have different L2 reconvergence behavior; and the deletion ordering expected for a VirtualNetwork with bare-metal connectivity configured (routes withdrawn before pod/namespace teardown).
 
 **Documentation Inputs:**
 - **Story 5.01:** the fabric-side static route and its content.

@@ -19,7 +19,7 @@ Delivers a fully functional Secondary VirtualNetwork: the opt-in type flag, a si
 - [ ] VMs in different subnets of the same Secondary VirtualNetwork communicate with each other via the router pod's `.1` gateway.
 - [ ] VMs reach the internet via the router pod's SNAT egress path.
 - [ ] Adding or removing a subnet is reflected in the router pod (via recreation) without disrupting unrelated VirtualNetworks.
-- [ ] A deployment with no fabric manager configured never provisions a transit interface or any fabric-side machinery for its Secondary VirtualNetworks.
+- [ ] A deployment with no supported transit backend never provisions a transit interface or any fabric-side machinery for its Secondary VirtualNetworks.
 - [ ] A VM with only Secondary VN subnets has DNS resolver configuration mirroring the router pod's own `/etc/resolv.conf`; a VM with a Primary UDN attachment elsewhere is unaffected (its Primary attachment's own DNS configuration applies).
 - [ ] A VM with a Primary UDN attachment elsewhere reaches every subnet in the Secondary VN via a cloud-init-injected route scoped to the VN's own CIDR through `.1`, without its Primary attachment's default route being overridden.
 
@@ -108,20 +108,20 @@ Delivers a fully functional Secondary VirtualNetwork: the opt-in type flag, a si
 
 ---
 
-### Story 1.05: [DEV] Recreation-based subnet add/remove and fabric-manager-absence check
+### Story 1.05: [DEV] Recreation-based subnet add/remove and supported-transit absence check
 
 **As a** provider,
-**I want to** have subnet changes reflected in the router pod, and bare-metal machinery skipped entirely when no fabric manager exists,
+**I want to** have subnet changes reflected in the router pod, and bare-metal machinery skipped entirely when no supported transit backend exists,
 **So that** the VirtualNetwork works correctly end-to-end even before live-attach optimization (Epic 2) or fabric integration (Epic 4/5) exist.
 
 **Acceptance Criteria:**
 - [ ] Adding a subnet to a Secondary VirtualNetwork results in the router pod being recreated with the new Secondary UDN attachment, recovering existing subnets' addresses via persistent IPAMClaim.
 - [ ] Removing a subnet results in the router pod being recreated without the removed attachment, with remaining subnets unaffected beyond the recreation itself.
-- [ ] At VirtualNetwork creation, the operator resolves the target NetworkClass and records whether it has a fabric manager configured; when it does not, no transit interface or fabric-side machinery (Epics 4/5) is ever provisioned for this VirtualNetwork.
+- [ ] At VirtualNetwork creation, the operator resolves the target NetworkClass and records whether it has a supported transit contract; when no manager exists or the configured manager does not support the selected transit contract, no transit interface or fabric-side machinery (Epics 4/5) is ever provisioned for this VirtualNetwork.
 
-**Implementation Guidance:** This story implements the "always recreate" baseline described in design.md's Alternatives section, which Epic 2 later replaces with a live-attach-first, recreate-as-fallback approach — write the recreation logic so Epic 2 can slot the live-attach path in front of it without rework (e.g., as a function/method the fallback path can call directly). For the NetworkClass check, see design.md's Open Question 7 (Phase 2) — implement using whatever NetworkClass field/representation is confirmed to indicate "no fabric manager"; if not yet resolved, flag this explicitly rather than guessing at the API shape.
+**Implementation Guidance:** This story implements the "always recreate" baseline described in design.md's Alternatives section, which Epic 2 later replaces with a live-attach-first, recreate-as-fallback approach — write the recreation logic so Epic 2 can slot the live-attach path in front of it without rework (e.g., as a function/method the fallback path can call directly). For the NetworkClass check, see design.md's Open Questions 7 and 14 (Phase 2) — use the confirmed representation of both the selected fabric manager and its supported transit contract; do not infer EVPN from manager presence alone. If the API shape is not yet resolved, flag this explicitly rather than guessing.
 
-**Testing Approach:** Integration tests: add a subnet, verify router pod recreation and address persistence; remove a subnet, verify the same; create a Secondary VN on a fabric-manager-less NetworkClass, verify no transit interface appears. Unit tests for the recreation reconciliation logic.
+**Testing Approach:** Integration tests: add a subnet, verify router pod recreation and address persistence; remove a subnet, verify the same; create a Secondary VN on a fabric-manager-less NetworkClass and on a configured-but-unsupported backend, verifying no transit interface appears in either case. Unit tests for the recreation reconciliation logic and supported-transit decision.
 
 **Dependencies:** Story 1.02, Story 1.04
 

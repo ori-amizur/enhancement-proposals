@@ -13,7 +13,7 @@ Requirement IDs (FR-N) are assigned sequentially from the PRD's Acceptance Crite
 | 1 | [Secondary VirtualNetwork Foundation](epic-1-foundation.md) | L | 1 | FR-1–FR-6, FR-14, FR-15, FR-21, FR-22 | None |
 | 2 | [Live Subnet Attach/Detach](epic-2-live-attach.md) | M | 1 | FR-9–FR-13 | Epic 1 |
 | 3 | [NAT Gateway via EgressIP](epic-3-nat-gateway.md) | S | 1 | FR-7, FR-8 | Epic 1 |
-| 4 | [Fabric Manager Detection & EVPN Transit Interface](epic-4-transit-interface.md) | M | 2 | FR-16 | Epic 1 |
+| 4 | [Fabric Manager Transit Contract & Netris EVPN Interface](epic-4-transit-interface.md) | M | 2 | FR-16 | Epic 1 |
 | 5 | [Bidirectional Bare-Metal Route Dispatch](epic-5-bare-metal-routing.md) | L | 2 | FR-17–FR-20 | Epic 4 |
 
 No epic sizes to XXL — no splits required beyond the two-epic split already applied within each phase (foundation vs. live-attach optimization; transit-interface provisioning vs. route dispatch).
@@ -39,5 +39,5 @@ Phase 1 (Epics 1–3) is independently shippable and delivers complete value wit
 - **Epic 1**: stories 1.01–1.05 are sequential (each builds directly on the previous one's resources); 1.06 (QE) and 1.07 (DOCS) follow once 1.01–1.05 are merged.
 - **Epic 2**: 2.01 (agent) can start in parallel with 2.02 (live-attach patch logic) since they're different code paths that converge in 2.03 (fallback trigger, which needs both). 2.04/2.05 follow.
 - **Epic 3**: fully sequential, small epic.
-- **Epic 4**: 4.01 (NetworkClass detection) must land before 4.02 (OSAC-managed VirtualNetwork-scoped transit lifecycle), followed by 4.03 (conditional transit interface provisioning) and 4.04 (QE validation).
+- **Epic 4**: 4.01 (NetworkClass manager and transit-capability detection) must land before 4.02 (OSAC-managed VirtualNetwork-scoped Netris EVPN transit lifecycle), followed by 4.03 (Netris EVPN interface provisioning) and 4.04 (QE validation). Other fabric-manager transports, such as an `agentless_net` VLAN/LocalNet transit path to a net-node routing namespace, require a separate backend implementation and test scope.
 - **Epic 5**: 5.01 and 5.02 can proceed in parallel (they're the two directions of the same route-dispatch mechanism); 5.03 (reconciliation consistency) depends on both; 5.04/5.05 follow.

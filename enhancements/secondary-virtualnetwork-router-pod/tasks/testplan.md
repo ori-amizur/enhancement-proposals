@@ -360,26 +360,28 @@
 
 ---
 
-### FR-16: Fabric-manager-configured deployment → router pod gets transit interface + bare-metal mechanism
+### FR-16: Supported fabric-manager backend → router pod gets backend-specific transit interface + bare-metal mechanism
 
-#### TC-FR16-01: A Secondary VirtualNetwork on a fabric-manager-configured NetworkClass gains a transit interface
+#### TC-FR16-01: A Secondary VirtualNetwork on a Netris/EVPN NetworkClass gains a transit interface
 
 | Story | AC | Priority | Automation |
 |-------|-----|----------|------------|
 | Story 4.01, 4.02, 4.03 | AC-1, AC-2 | critical | automated |
 
 ##### Preconditions
-- A NetworkClass exists with a fabric manager configured.
+- A NetworkClass exists selecting the supported Netris/EVPN backend.
 
 ##### Steps
 1. Create a Secondary VirtualNetwork targeting that NetworkClass.
-2. Query the router pod's interfaces.
+2. Query the VN-scoped Netris IPAM subnet, its enforced allocation range, the CUDN's `reservedSubnets`, the persistent IPAMClaim, and the router pod's interfaces.
 
 ##### Expected Results
 - The router pod has a transit interface (a Primary CUDN with EVPN transport) in addition to the cluster-network interface.
 - The transit interface's address is reserved via an IPAMClaim with `ipam.lifecycle: Persistent`.
+- The default `/24` allocation policy is disjoint: Netris allocates only from its `/26`, CUDN allocates the router address only from the separate OSAC `/26`, and the remaining `/25` is reserved.
+- The router pod's transit IP is not present in the Netris-owned or otherwise reserved ranges.
 
-#### TC-FR16-02: The transit interface's address persists across a router pod restart
+#### TC-FR16-02: The Netris EVPN transit interface's address persists across a router pod restart
 
 | Story | AC | Priority | Automation |
 |-------|-----|----------|------------|
@@ -395,6 +397,24 @@
 ##### Expected Results
 - The recreated router pod's transit interface has the same address as recorded before the restart.
 
+#### TC-FR16-03: A configured unsupported fabric backend does not gain an EVPN transit interface
+
+| Story | AC | Priority | Automation |
+|-------|-----|----------|------------|
+| Story 4.01, 4.04 | AC-1, AC-4 | high | automated |
+
+##### Preconditions
+- A NetworkClass exists with a configured fabric manager that does not advertise the supported Netris/EVPN transit contract.
+
+##### Steps
+1. Create a Secondary VirtualNetwork targeting that NetworkClass.
+2. Inspect the VirtualNetwork status/events and the router pod's interfaces.
+
+##### Expected Results
+- No EVPN transit CUDN, IPAMClaim, MAC-VRF, or VNI is created.
+- The VirtualNetwork exposes an explicit unsupported-transit diagnostic rather than silently treating the fabric manager as EVPN-capable.
+- The router pod remains on the Phase-1 interface set.
+
 ---
 
 ### FR-17: Adding/removing VM subnet → static route pushed/withdrawn to fabric manager
@@ -406,7 +426,7 @@
 | Story 5.01 | AC-1, AC-2 | critical | automated |
 
 ##### Preconditions
-- A Secondary VirtualNetwork exists on a fabric-manager-configured NetworkClass with a transit interface (TC-FR16-01).
+- A Secondary VirtualNetwork exists on a Netris/EVPN NetworkClass with a transit interface (TC-FR16-01).
 
 ##### Steps
 1. Create a Subnet (`10.0.1.0/24`) referencing the VirtualNetwork.
@@ -429,7 +449,7 @@
 | Story 5.02 | AC-1, AC-2 | critical | automated |
 
 ##### Preconditions
-- A Secondary VirtualNetwork exists on a fabric-manager-configured NetworkClass with a transit interface.
+- A Secondary VirtualNetwork exists on a Netris/EVPN NetworkClass with a transit interface.
 - A bare-metal subnet (`10.0.3.0/24`) exists on the fabric.
 - The router pod's current UID/start-time is recorded.
 
